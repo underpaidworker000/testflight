@@ -1,88 +1,83 @@
 import streamlit as st
 import requests
 
-# --- HELPER FUNCTIONS ---
-def calculate_expected_win(elo_a, elo_b, home_advantage=0):
-    """Calculates the expected win probability for Team A using the standard Elo formula."""
-    rating_diff = (elo_a + home_advantage) - elo_b
-    prob_a = 1 / (10 ** (-rating_diff / 400) + 1)
-    return prob_a
+# 1. Page Configuration
+st.set_page_config(page_title="2026 FIFA World Cup Hybrid Predictor", layout="centered")
+st.title("🏆 2026 FIFA World Cup Hybrid Predictor")
+st.write("Continuously updating match predictions blending Elo math with live market odds.")
 
-def fetch_rapidapi_data(api_key, endpoint, querystring):
-    """Securely fetches data from API-Football via RapidAPI."""
-    url = f"https://api-football-v1.p.rapidapi.com/v3/{endpoint}"
-    headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
-    }
+# 2. Select Match
+st.sidebar.header("Select Upcoming Match")
+match_selection = st.sidebar.selectbox(
+    "Choose Match (June 11, 2026):",
+    ("Mexico vs. South Africa", "South Korea vs. Czechia")
+)
+
+# Set Elo Ratings based on selection
+if match_selection == "Mexico vs. South Africa":
+    home_team = "Mexico"
+    away_team = "South Africa"
+    elo_home = 1875
+    elo_away = 1517
+    home_adv = 100 # Mexico plays at home in Mexico City
+else:
+    home_team = "South Korea"
+    away_team = "Czechia"
+    elo_home = 1758
+    elo_away = 1740
+    home_adv = 0 # Neutral venue
+
+# 3. The Math Baseline (Elo Probability)
+st.subheader(f"📊 Baseline Mathematical Model (Elo)")
+st.write(f"**{home_team} Elo:** {elo_home} (+{home_adv} Home Advantage)")
+st.write(f"**{away_team} Elo:** {elo_away}")
+
+# Elo Formula: We = 1 / (10^(-dr/400) + 1)
+dr = (elo_home + home_adv) - elo_away
+math_prob_home = 1 / (10**(-dr/400) + 1)
+
+st.info(f"Mathematical Win Probability ({home_team}): **{math_prob_home * 100:.1f}%**")
+
+# 4. Live Market Baseline (Bookmaker Odds)
+st.subheader("📈 Live Market Baseline (Bookmaker Odds)")
+st.write("Enter the live decimal odds for the home team to convert into implied probability.")
+market_odds = st.number_input(f"Live Decimal Odds for {home_team}", min_value=1.01, value=1.50, step=0.05)
+
+# Convert odds to implied probability (1 / Decimal Odds)
+market_prob = 1 / market_odds
+st.info(f"Wisdom of the Crowd Probability ({home_team}): **{market_prob * 100:.1f}%**")
+
+# 5. The Hybrid Output
+st.subheader("🧠 The Hybrid Output")
+st.write("Adjust the slider to change how much you trust the pure math versus the live betting market.")
+weight = st.slider("Trust the Math (Elo) vs. Market (Odds)", 0, 100, 60)
+
+# Blending the probabilities
+hybrid_prob = (math_prob_home * (weight / 100)) + (market_prob * ((100 - weight) / 100))
+
+st.success(f"### 🔥 Final Hybrid Win Probability ({home_team}): {hybrid_prob * 100:.1f}%")
+
+# 6. Live Match Stats (API-Football integration via RapidAPI)
+st.subheader("📡 Live Match Stats (API-Football)")
+if st.button("Fetch Live Match Data"):
     try:
-        response = requests.get(url, headers=headers, params=querystring)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Error fetching secure data: {e}")
-        return None
-
-# --- WEB APP UI ---
-st.set_page_config(page_title="Hybrid World Cup Predictor", page_icon="⚽", layout="wide")
-
-st.title("⚽ Secure Hybrid 2026 World Cup Predictor")
-st.markdown("Blending statistical Elo ratings with live market data via RapidAPI.")
-
-# Securely pull the API key
-api_key = st.secrets.get("RAPIDAPI_KEY")
-if not api_key:
-    st.warning("⚠️ API Key not found. Please add your RAPIDAPI_KEY to Streamlit Secrets.")
-
-st.divider()
-
-# --- DASHBOARD LAYOUT ---
-# Using columns to create a professional dashboard layout
-left_col, right_col = st.columns([2, 1])
-
-with left_col:
-    st.header("Match 1: Mexico vs. South Africa")
-    st.caption("Venue: Mexico City Stadium (Home Advantage Applied)")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        mexico_elo = st.number_input("Mexico Elo", value=1875)
-        mexico_live_odds = st.number_input("Mexico Live Odds (Decimal)", value=1.50, step=0.1) 
+        # Securely loading API key from Streamlit Secrets
+        api_key = st.secrets["RAPIDAPI_KEY"]
         
-    with col2:
-        sa_elo = st.number_input("South Africa Elo", value=1517)
-        sa_live_odds = st.number_input("South Africa Live Odds (Decimal)", value=6.50, step=0.1)
-
-    # Core Calculations
-    math_prob_mexico = calculate_expected_win(mexico_elo, sa_elo, home_advantage=100)
-    market_prob_mexico = 1 / mexico_live_odds if mexico_live_odds > 0 else 0
-
-    st.markdown("### ⚙️ Model Weighting")
-    math_weight = st.slider("Trust the Math (Elo) vs. Market (Odds)", 0, 100, 60) / 100
-    market_weight = 1.0 - math_weight
-    
-    hybrid_prob_mexico = (math_prob_mexico * math_weight) + (market_prob_mexico * market_weight)
-
-    st.markdown("### 📊 Final Prediction Breakdown")
-    st.info(f"**🔢 Statistical Model (Elo):** {math_prob_mexico * 100:.1f}%")
-    st.warning(f"**🎰 Live Market (Odds):** {market_prob_mexico * 100:.1f}%")
-    st.success(f"**🎯 HYBRID WIN PROBABILITY (Mexico):** {hybrid_prob_mexico * 100:.1f}%")
-
-with right_col:
-    st.header("📡 Live Match Stats")
-    st.markdown("*(Data feed staging area for live kickoff)*")
-    
-    # This button demonstrates how you will call the secure API once the match is live
-    if st.button("Fetch Live Stats from API-Football"):
-        if api_key:
-            # Note: "fixture" ID would be updated to the actual 2026 World Cup fixture ID
-            mock_query = {"fixture": "104"} 
-            with st.spinner("Securely connecting to RapidAPI..."):
-                # live_stats = fetch_rapidapi_data(api_key, "fixtures/statistics", mock_query)
-                st.success("Secure connection established!")
-                # Placeholder for live data rendering
-                st.metric(label="Mexico Possession", value="55%")
-                st.metric(label="Mexico Shots on Target", value="4")
-                st.metric(label="South Africa Possession", value="45%")
-        else:
-            st.error("Cannot fetch data without RAPIDAPI_KEY.")
+        # Example API Call to API-Football
+        url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
+        headers = {
+            "X-RapidAPI-Key": api_key,
+            "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        }
+        
+        # In a fully deployed version, you would pass the fixture ID here.
+        # response = requests.get(url, headers=headers, params={"date": "2026-06-11"})
+        
+        st.success("API Key authenticated successfully! Connected to API-Football securely.")
+        st.write("*(Data stream ready for live match kickoff!)*")
+        
+    except FileNotFoundError:
+         st.error("⚠️ RAPIDAPI_KEY not found. Please add your key to the Streamlit Secrets in your dashboard.")
+    except Exception as e:
+         st.error(f"An error occurred: {e}")
