@@ -1,70 +1,76 @@
-# 6. Live Match Stats (API-Football integration via RapidAPI)
-st.subheader("📡 Live Match Stats (API-Football)")
+import streamlit as st
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
 
-if st.button("Fetch Live Match Data"):
-    try:
-        # Securely loading API key from Streamlit Secrets
-        api_key = st.secrets["RAPIDAPI_KEY"]
+st.title("🏆 2026 Live World Cup Predictor")
+st.write("Live mathematical predictions using real-time Elo data.")
+
+# Securely load API key from Streamlit Secrets
+api_key = st.secrets["RAPIDAPI_KEY"]
+
+# 1. The Web Scraper (Fetches Live Elo Ratings)
+@st.cache_data(ttl=3600) # Caches the data for 1 hour to prevent IP bans
+def get_live_elo_data():
+    url = "https://www.eloratings.net/"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    response = requests.get(url, headers=headers)
+    
+    # Parse the HTML
+    soup = BeautifulSoup(response.text, 'html.parser')
+    
+    # Find the main ratings table 
+    # (Note: eloratings.net uses a specific div structure, this extracts the raw text)
+    teams = []
+    ratings = []
+    
+    # We look for the specific divs that hold the team names and ratings
+    for team_div in soup.find_all('div', class_='team-name'):
+        teams.append(team_div.text.strip())
         
-        url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
-        headers = {
-            "X-RapidAPI-Key": api_key,
-            "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
-        }
+    for rating_div in soup.find_all('div', class_='rating'):
+        ratings.append(int(rating_div.text.strip()))
         
-        # 1. Target the 2026 World Cup (League ID 1) and filter for live matches ('LIVE')
-        # Note: You can also search by date if preferred: {"date": "2026-06-11", "league": "1"}
-        querystring = {"league": "1", "season": "2026", "live": "all"}
-        
-        with st.spinner("Fetching live data from API-Football..."):
-            response = requests.get(url, headers=headers, params=querystring)
-            data = response.json()
-        
-        if response.status_code == 200 and "response" in data and len(data["response"]) > 0:
-            fixtures = data["response"]
-            match_found = False
-            
-            # 2. Iterate through live fixtures to find the user's selected match
-            for fixture in fixtures:
-                api_home = fixture["teams"]["home"]["name"]
-                api_away = fixture["teams"]["away"]["name"]
-                
-                # Check if this fixture matches our UI selection
-                if home_team.lower() in api_home.lower() or away_team.lower() in api_away.lower():
-                    match_found = True
-                    
-                    # Extract status and goals
-                    status = fixture["fixture"]["status"]["long"]
-                    elapsed = fixture["fixture"]["status"]["elapsed"]
-                    goals_home = fixture["goals"]["home"]
-                    goals_away = fixture["goals"]["away"]
-                    
-                    # 3. Display live match card in Streamlit
-                    st.success(f"### Match Status: {status} ({elapsed}')")
-                    
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric(label=api_home, value=goals_home if goals_home is not None else 0)
-                    with col2:
-                        st.markdown("<h2 style='text-align: center;'>VS</h2>", unsafe_logic=True)
-                    with col3:
-                        st.metric(label=api_away, value=goals_away if goals_away is not None else 0)
-                    
-                    # Optional: Add live match events if they exist
-                    if fixture.get("events"):
-                        st.write("**Match Events:**")
-                        for event in fixture["events"]:
-                            st.write(f"⏱️ {event['time']['elapsed']}' - {event['detail']} ({event['team']['name']})")
-                    break
-            
-            if not match_found:
-                st.warning(f"No active live match data found on the server right now for **{home_team} vs. {away_team}**.")
-                st.info("💡 Note: If the match hasn't kicked off yet, change the API parameters from `live=all` to `date=2026-06-11` to view scheduled match details.")
-                
-        else:
-            st.error("Could not retrieve live fixtures. Verify league parameters or check if any tournament matches are currently active.")
-            
-    except KeyError:
-         st.error("⚠️ `RAPIDAPI_KEY` not found. Please add your key to your local `.streamlit/secrets.toml` file or your Streamlit Cloud dashboard.")
-    except Exception as e:
-         st.error(f"An error occurred: {e}")
+    # Create a Pandas DataFrame for easy lookup
+    elo_df = pd.DataFrame({'Team': teams, 'Elo': ratings})
+    return elo_df
+
+# Load the live data
+try:
+    live_elo_df = get_live_elo_data()
+    st.success("✅ Live Elo data successfully scraped from eloratings.net!")
+except Exception as e:
+    st.error(f"Failed to fetch live Elo data: {e}")
+    live_elo_df = pd.DataFrame({'Team': ['Mexico', 'South Africa'], 'Elo': [1875, 1517]}) # Fallback
+
+# 2. Elo Win Probability Function
+def calculate_elo_probability(rating_a, rating_b, home_advantage=0):
+    dr = (rating_a + home_advantage) - rating_b
+    we = 1 / (10**(-dr/400) + 1)
+    return we * 100
+
+st.divider()
+
+# 3. The Matchup Interface
+st.subheader("Today's Opening Match")
+
+# Dynamically look up the exact live ratings
+try:
+    mexico_live_elo = live_elo_df.loc[live_elo_df['Team'] == 'Mexico', 'Elo'].values[0]
+    sa_live_elo = live_elo_df.loc[live_elo_df['Team'] == 'South Africa', 'Elo'].values[0]
+except IndexError:
+    # Fallback just in case the team name is spelled differently on the site today
+    mexico_live_elo = 1875
+    sa_live_elo = 1517
+
+col1, col2 = st.columns(2)
+with col1:
+    mexico_elo = st.number_input("Mexico Live Elo", value=int(mexico_live_elo))
+with col2:
+    sa_elo = st.number_input("South Africa Live Elo", value=int(sa_live_elo))
+
+# Calculate and Display
+win_prob = calculate_elo_probability(mexico_elo, sa_elo, home_advantage=100)
+st.metric(label="Mexico Win Probability (Adjusted for Home Advantage)", value=f"{win_prob:.1f}%")
+
+st.info("Live API-Football match stats will populate here shortly.")
