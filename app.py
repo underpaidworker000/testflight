@@ -1,83 +1,70 @@
-import streamlit as st
-import requests
-
-# 1. Page Configuration
-st.set_page_config(page_title="2026 FIFA World Cup Hybrid Predictor", layout="centered")
-st.title("🏆 2026 FIFA World Cup Hybrid Predictor")
-st.write("Continuously updating match predictions blending Elo math with live market odds.")
-
-# 2. Select Match
-st.sidebar.header("Select Upcoming Match")
-match_selection = st.sidebar.selectbox(
-    "Choose Match (June 11, 2026):",
-    ("Mexico vs. South Africa", "South Korea vs. Czechia")
-)
-
-# Set Elo Ratings based on selection
-if match_selection == "Mexico vs. South Africa":
-    home_team = "Mexico"
-    away_team = "South Africa"
-    elo_home = 1875
-    elo_away = 1517
-    home_adv = 100 # Mexico plays at home in Mexico City
-else:
-    home_team = "South Korea"
-    away_team = "Czechia"
-    elo_home = 1758
-    elo_away = 1740
-    home_adv = 0 # Neutral venue
-
-# 3. The Math Baseline (Elo Probability)
-st.subheader(f"📊 Baseline Mathematical Model (Elo)")
-st.write(f"**{home_team} Elo:** {elo_home} (+{home_adv} Home Advantage)")
-st.write(f"**{away_team} Elo:** {elo_away}")
-
-# Elo Formula: We = 1 / (10^(-dr/400) + 1)
-dr = (elo_home + home_adv) - elo_away
-math_prob_home = 1 / (10**(-dr/400) + 1)
-
-st.info(f"Mathematical Win Probability ({home_team}): **{math_prob_home * 100:.1f}%**")
-
-# 4. Live Market Baseline (Bookmaker Odds)
-st.subheader("📈 Live Market Baseline (Bookmaker Odds)")
-st.write("Enter the live decimal odds for the home team to convert into implied probability.")
-market_odds = st.number_input(f"Live Decimal Odds for {home_team}", min_value=1.01, value=1.50, step=0.05)
-
-# Convert odds to implied probability (1 / Decimal Odds)
-market_prob = 1 / market_odds
-st.info(f"Wisdom of the Crowd Probability ({home_team}): **{market_prob * 100:.1f}%**")
-
-# 5. The Hybrid Output
-st.subheader("🧠 The Hybrid Output")
-st.write("Adjust the slider to change how much you trust the pure math versus the live betting market.")
-weight = st.slider("Trust the Math (Elo) vs. Market (Odds)", 0, 100, 60)
-
-# Blending the probabilities
-hybrid_prob = (math_prob_home * (weight / 100)) + (market_prob * ((100 - weight) / 100))
-
-st.success(f"### 🔥 Final Hybrid Win Probability ({home_team}): {hybrid_prob * 100:.1f}%")
-
 # 6. Live Match Stats (API-Football integration via RapidAPI)
 st.subheader("📡 Live Match Stats (API-Football)")
+
 if st.button("Fetch Live Match Data"):
     try:
         # Securely loading API key from Streamlit Secrets
         api_key = st.secrets["RAPIDAPI_KEY"]
         
-        # Example API Call to API-Football
         url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
         headers = {
             "X-RapidAPI-Key": api_key,
             "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
         }
         
-        # In a fully deployed version, you would pass the fixture ID here.
-        # response = requests.get(url, headers=headers, params={"date": "2026-06-11"})
+        # 1. Target the 2026 World Cup (League ID 1) and filter for live matches ('LIVE')
+        # Note: You can also search by date if preferred: {"date": "2026-06-11", "league": "1"}
+        querystring = {"league": "1", "season": "2026", "live": "all"}
         
-        st.success("API Key authenticated successfully! Connected to API-Football securely.")
-        st.write("*(Data stream ready for live match kickoff!)*")
+        with st.spinner("Fetching live data from API-Football..."):
+            response = requests.get(url, headers=headers, params=querystring)
+            data = response.json()
         
-    except FileNotFoundError:
-         st.error("⚠️ RAPIDAPI_KEY not found. Please add your key to the Streamlit Secrets in your dashboard.")
+        if response.status_code == 200 and "response" in data and len(data["response"]) > 0:
+            fixtures = data["response"]
+            match_found = False
+            
+            # 2. Iterate through live fixtures to find the user's selected match
+            for fixture in fixtures:
+                api_home = fixture["teams"]["home"]["name"]
+                api_away = fixture["teams"]["away"]["name"]
+                
+                # Check if this fixture matches our UI selection
+                if home_team.lower() in api_home.lower() or away_team.lower() in api_away.lower():
+                    match_found = True
+                    
+                    # Extract status and goals
+                    status = fixture["fixture"]["status"]["long"]
+                    elapsed = fixture["fixture"]["status"]["elapsed"]
+                    goals_home = fixture["goals"]["home"]
+                    goals_away = fixture["goals"]["away"]
+                    
+                    # 3. Display live match card in Streamlit
+                    st.success(f"### Match Status: {status} ({elapsed}')")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric(label=api_home, value=goals_home if goals_home is not None else 0)
+                    with col2:
+                        st.markdown("<h2 style='text-align: center;'>VS</h2>", unsafe_logic=True)
+                    with col3:
+                        st.metric(label=api_away, value=goals_away if goals_away is not None else 0)
+                    
+                    # Optional: Add live match events if they exist
+                    if fixture.get("events"):
+                        st.write("**Match Events:**")
+                        for event in fixture["events"]:
+                            st.write(f"⏱️ {event['time']['elapsed']}' - {event['detail']} ({event['team']['name']})")
+                    break
+            
+            if not match_found:
+                st.warning(f"No active live match data found on the server right now for **{home_team} vs. {away_team}**.")
+                st.info("💡 Note: If the match hasn't kicked off yet, change the API parameters from `live=all` to `date=2026-06-11` to view scheduled match details.")
+                
+        else:
+            st.error("Could not retrieve live fixtures. Verify league parameters or check if any tournament matches are currently active.")
+            
+    except KeyError:
+         st.error("⚠️ `RAPIDAPI_KEY` not found. Please add your key to your local `.streamlit/secrets.toml` file or your Streamlit Cloud dashboard.")
     except Exception as e:
          st.error(f"An error occurred: {e}")
