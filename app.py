@@ -3,6 +3,9 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 
+# The rest of your code starts here...
+st.subheader("📡 Live Match Stats (API-Football)")
+
 st.title("🏆 2026 Live World Cup Predictor")
 st.write("Live mathematical predictions using real-time Elo data.")
 
